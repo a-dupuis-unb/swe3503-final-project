@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Expense Tracker</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .progress-bar {
+            background-color: #f0f0f0;
+            height: 10px;
+            border-radius: 5px;
+            margin: 5px 0;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+        .under-budget { background-color: #4CAF50; }
+        .over-budget { background-color: #f44336; }
+        .budget-status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 10px 0;
+        }
+        .budget-details {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 5px;
+        }
+        .budget-metric {
+            text-align: center;
+            padding: 5px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    {% include 'navbar.html' %}
+    <div class="container">
+        <h1>Dashboard</h1>
+        
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-messages">
+                    {% for message in messages %}
+                        <div class="flash-message">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <div class="dashboard-section">
+            <h2>Budget Overview</h2>
+            {% for status in budget_status %}
+                <div class="summary-item">
+                    <h3>{{ status.category }}</h3>
+                    <div class="budget-details">
+                        <div class="budget-metric">
+                            <strong>Budget</strong>
+                            <div>${{ "%.2f"|format(status.budget_amount) if status.has_budget else "0.00" }}</div>
+                        </div>
+                        <div class="budget-metric">
+                            <strong>Spent</strong>
+                            <div>${{ "%.2f"|format(status.spent) }}</div>
+                        </div>
+                        <div class="budget-metric">
+                            <strong>Remaining</strong>
+                            <div>${{ "%.2f"|format(status.remaining) if status.has_budget else "0.00" }}</div>
+                        </div>
+                    </div>
+                    
+                    {% if status.has_budget %}
+                        <div class="progress-bar">
+                            {% set percentage = (status.spent / status.budget_amount * 100) if status.budget_amount > 0 else 100 %}
+                            <div class="progress-fill {{ 'under-budget' if status.remaining >= 0 else 'over-budget' }}"
+                                 style="width: {{ percentage if percentage <= 100 else 100 }}%">
+                            </div>
+                        </div>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        </div>
+
+        <div class="dashboard-section">
+            <h2>Set Budget</h2>
+            <form action="{{ url_for('set_budget') }}" method="POST" class="form">
+                <div class="form-group">
+                    <label for="category">Category:</label>
+                    <select id="category" name="category" class="select-input" required>
+                        {% for category in categories %}
+                            <option value="{{ category }}">{{ category }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="amount">Budget Amount:</label>
+                    <input type="number" step="0.01" id="amount" name="amount" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="period">Period:</label>
+                    <select id="period" name="period" class="select-input">
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn">Set Budget</button>
+            </form>
+        </div>
+
+        <div class="navigation">
+            <a href="{{ url_for('index') }}" class="btn">Back to Expense Tracker</a>
+        </div>
+    </div>
+</body>
+</html>
