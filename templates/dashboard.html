@@ -38,6 +38,7 @@
             border-radius: 5px;
         }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     {% include 'navbar.html' %}
@@ -53,6 +54,35 @@
                 </div>
             {% endif %}
         {% endwith %}
+
+        <div class="dashboard-section">
+            <h2>Set Budget</h2>
+            <form action="{{ url_for('set_budget') }}" method="POST" class="form">
+                <div class="form-group">
+                    <label for="category">Category:</label>
+                    <select id="category" name="category" class="select-input" required>
+                        {% for category in categories %}
+                            <option value="{{ category }}">{{ category }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="amount">Budget Amount:</label>
+                    <input type="number" step="0.01" id="amount" name="amount" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="period">Period:</label>
+                    <select id="period" name="period" class="select-input">
+                        <option value="monthly">Monthly</option>
+                        <option value="weekly">Weekly</option>
+                    </select>
+                </div>
+                
+                <button type="submit" class="btn">Set Budget</button>
+            </form>
+        </div>
 
         <div class="dashboard-section">
             <h2>Budget Overview</h2>
@@ -85,35 +115,72 @@
                 </div>
             {% endfor %}
         </div>
+             
+        <!-- Example pie chart for category distribution -->
+         <h2>Current Month Expense Breakdown</h2>
+         <canvas id="pieChart" width="500" height="400"></canvas>
+         
+         <!-- Example line chart for monthly spending trend -->
+         <h2>Monthly Spending Trend</h2>
+         <canvas id="lineChart" width="400" height="200"></canvas>
+     </div>
+ 
+     <!-- Pass Python data to JavaScript using Jinja2's tojson filter -->
+     <script>
+         // Data from Flask
+         const lineLabels = {{ line_labels|tojson }};
+         const lineData = {{ line_data|tojson }};
+ 
+         const categoryLabels = {{ category_labels|tojson }};
+         const categoryValues = {{ category_values|tojson }};
 
-        <div class="dashboard-section">
-            <h2>Set Budget</h2>
-            <form action="{{ url_for('set_budget') }}" method="POST" class="form">
-                <div class="form-group">
-                    <label for="category">Category:</label>
-                    <select id="category" name="category" class="select-input" required>
-                        {% for category in categories %}
-                            <option value="{{ category }}">{{ category }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                
-                <div class="form-group">
-                    <label for="amount">Budget Amount:</label>
-                    <input type="number" step="0.01" id="amount" name="amount" required>
-                </div>
-                
-                <div class="form-group">
-                    <label for="period">Period:</label>
-                    <select id="period" name="period" class="select-input">
-                        <option value="monthly">Monthly</option>
-                        <option value="weekly">Weekly</option>
-                    </select>
-                </div>
-                
-                <button type="submit" class="btn">Set Budget</button>
-            </form>
-        </div>
+         // Create the pie chart
+         new Chart(document.getElementById('pieChart'), {
+             type: 'pie',
+             data: {
+                 labels: categoryLabels,
+                 datasets: [{
+                     label: 'Expense Distribution',
+                     data: categoryValues,
+                     backgroundColor: [
+                         'rgba(255, 99, 132, 0.6)',
+                         'rgba(54, 162, 235, 0.6)',
+                         'rgba(255, 206, 86, 0.6)',
+                         'rgba(75, 192, 192, 0.6)'
+                     ],
+                     borderColor: '#fff',
+                     borderWidth: 1
+                 }]
+             },
+             options: {
+                 responsive: false,
+             }
+         });
+ 
+         // Create the line chart
+         new Chart(document.getElementById('lineChart'), {
+             type: 'line',
+             data: {
+                 labels: lineLabels,
+                 datasets: [{
+                     label: 'Monthly Spending',
+                     data: lineData,
+                     borderColor: 'rgba(75, 192, 192, 1)',
+                     backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                     fill: false,
+                     tension: 0.1
+                 }]
+             },
+             options: {
+                 responsive: true,
+                 scales: {
+                     y: {
+                         beginAtZero: true
+                     }
+                 }
+             }
+         });
+     </script>
 
         <div class="navigation">
             <a href="{{ url_for('index') }}" class="btn">Back to Expense Tracker</a>
