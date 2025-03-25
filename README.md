@@ -12,7 +12,7 @@ This application helps users track expenses, set budgets, and visualize their fi
 - **Dashboard:**  
   - Visual overview of expenses vs. budgets.  
   - Progress bars indicate if you’re under or over budget.
-- **Responsive UI (Optional):** Basic CSS styling and optional navigation bar for ease of use.
+- **Responsive UI:** Basic CSS styling and optional navigation bar for ease of use.
 
 ## Prerequisites
 - **Python 3.8+**
@@ -57,8 +57,8 @@ If port 5000 is in use, either:
 **Lockout Mechanism**
 
 - After a certain number of failed login attempts (e.g., 5), the user is locked out for 3 minutes.
-- Lockout data may be stored either in-memory or in the database, depending on your configuration.
-- If using in-memory, lockouts reset when the server restarts.
+- Lockout data is stored in-memory.
+- Lockouts reset when the server restarts.
 
 **Debug Mode**
 
