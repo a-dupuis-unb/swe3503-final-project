@@ -1,29 +1,56 @@
 # app.py
-from flask import Flask, render_template, request, redirect, url_for, flash
-from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user, UserMixin
-from final_project.models import db, User, Expense, Budget, EXPENSE_CATEGORIES
+from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_login import login_user, logout_user, login_required, current_user
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
-import json
+import json, re
+from final_project.encryption_utils import decrypt_to_numeric
 
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///finance.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SECRET_KEY'] = 'supersecretkey'
+class Pagination:
+    def __init__(self, query, page, per_page, total, items):
+        self.query = query
+        self.page = page
+        self.per_page = per_page
+        self.total = total
+        self.items = items
 
-db.init_app(app)
+    @property
+    def pages(self):
+        if self.per_page == 0 or self.total == 0:
+            return 0
+        return int((self.total + self.per_page - 1) / self.per_page)
 
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'
+    @property
+    def has_prev(self):
+        return self.page > 1
 
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
+    @property
+    def has_next(self):
+        return self.page < self.pages
 
-# Create database tables
-with app.app_context():
-    db.create_all()
+    @property
+    def prev_num(self):
+        if not self.has_prev:
+            return None
+        return self.page - 1
+
+    @property
+    def next_num(self):
+        if not self.has_next:
+            return None
+        return self.page + 1
+
+from final_project import db
+from final_project.models import User, Expense, Budget, EXPENSE_CATEGORIES
+
+# Create a blueprint for all routes
+bp = Blueprint('main', __name__)
+
+# Database tables are now managed through Flask-Migrate
+# To initialize:
+# 1. flask db init    - Create migration repository
+# 2. flask db migrate - Generate initial migration
+# 3. flask db upgrade - Apply migration to database
 
 LOCKOUT_THRESHOLD = 5      # Number of failed attempts allowed
 LOCKOUT_TIME = 3           # Lockout duration in minutes
@@ -34,8 +61,7 @@ LOCKOUT_UNTIL = {}         # Tracks lockout expiration time per user identifier
 # User Authentication Routes
 # ---------------------------
 
-import re
-@app.route('/register', methods=['GET', 'POST'])
+@bp.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         username = request.form.get('username')
@@ -47,24 +73,25 @@ def register():
 
         if not re.match(pattern, password):
             flash("Password must be at least 8 characters long, contain an uppercase letter, and a digit.", "danger")
-            return redirect(url_for('register'))
+            return redirect(url_for('main.register'))
         
         # Simple validation
         if not username or not email or not password:
             flash("Please fill out all fields.", "danger")
-            return redirect(url_for('register'))
+            return redirect(url_for('main.register'))
         if User.query.filter((User.username==username) | (User.email==email)).first():
             flash("Username or email already exists.", "danger")
-            return redirect(url_for('register'))
+            return redirect(url_for('main.register'))
         new_user = User(username=username, email=email)
         new_user.set_password(password)
         db.session.add(new_user)
+        new_user.generate_encryption_key()
         db.session.commit()
         flash("Registration successful. Please log in.", "success")
-        return redirect(url_for('login'))
+        return redirect(url_for('main.login'))
     return render_template('register.html')
 
-@app.route('/login', methods=['GET', 'POST'])
+@bp.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         identifier = request.form.get('identifier')  # username or email
@@ -75,7 +102,7 @@ def login():
         if lockout_expires and datetime.utcnow() < lockout_expires:
             remaining = int((lockout_expires - datetime.utcnow()).total_seconds())
             flash(f"You are locked out. Please wait {remaining} seconds before trying again.", "danger")
-            return redirect(url_for('login'))
+            return redirect(url_for('main.login'))
 
         # 2. Attempt to find and authenticate user
         user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
@@ -87,7 +114,7 @@ def login():
             FAILED_ATTEMPTS[identifier] = 0
             LOCKOUT_UNTIL.pop(identifier, None)  # remove from lockout if present
             flash("Logged in successfully!", "success")
-            return redirect(url_for('index'))
+            return redirect(url_for('main.index'))
         else:
             # FAIL: Increment attempt count
             FAILED_ATTEMPTS[identifier] = FAILED_ATTEMPTS.get(identifier, 0) + 1
@@ -102,23 +129,23 @@ def login():
             else:
                 flash(f"Invalid credentials. You have {remaining_attempts} attempts left.", "danger")
 
-            return redirect(url_for('login'))
+            return redirect(url_for('main.login'))
 
     # GET request: Just render the login page
     return render_template('login.html')
 
-@app.route('/logout')
+@bp.route('/logout')
 @login_required
 def logout():
     logout_user()
     flash("Logged out successfully.", "success")
-    return redirect(url_for('login'))
+    return redirect(url_for('main.login'))
 
 # ---------------------------
 # Expense Tracking Routes
 # ---------------------------
 
-@app.route('/')
+@bp.route('/')
 @login_required
 def index():
     # Always get the 5 most recent expenses (unfiltered)
@@ -137,48 +164,58 @@ def index():
     end_date = request.args.get('end_date', '')
     search_text = request.args.get('search_text', '')
 
-    # Base query for expenses belonging to current user
+    # Basic query without amount filters
     query = Expense.query.filter_by(user_id=current_user.id)
 
-    # Filter by category if provided
-    if category_filter:
-        query = query.filter(Expense.category == category_filter)
-
-    # Filter by amount range if provided
-    if min_amount:
-        try:
-            query = query.filter(Expense._amount >= float(min_amount))
-        except ValueError:
-            pass  # ignore if user typed something invalid
-    if max_amount:
-        try:
-            query = query.filter(Expense._amount <= float(max_amount))
-        except ValueError:
-            pass
-
-    # Filter by date range if provided
-    from datetime import datetime
-    date_format = '%Y-%m-%d'
+    # Apply date filters if provided
     if start_date:
         try:
-            start_dt = datetime.strptime(start_date, date_format)
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
             query = query.filter(Expense.date >= start_dt)
         except ValueError:
             pass
     if end_date:
         try:
-            end_dt = datetime.strptime(end_date, date_format)
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
             query = query.filter(Expense.date <= end_dt)
         except ValueError:
             pass
 
-    # Search by description (case-insensitive)
-    if search_text:
-        # Using ilike for case-insensitive matching
-        query = query.filter(Expense.description.ilike(f'%{search_text}%'))
+    # Apply category filter if provided
+    if category_filter and category_filter != 'all':
+        query = query.filter(Expense.category == category_filter)
 
-    # Sort results (optional). Let’s default to newest first.
-    filtered_expenses = query.order_by(Expense.date.desc()).all()
+    # Get all matching expenses
+    expenses = query.order_by(Expense.date.desc()).all()
+
+    # Filter by amount and search text in Python
+    filtered_expenses = []
+    for expense in expenses:
+        amount = expense.amount  # This will decrypt the amount
+        
+        # Apply amount filters
+        if min_amount and amount < float(min_amount):
+            continue
+        if max_amount and amount > float(max_amount):
+            continue
+            
+        # Apply search text filter
+        if search_text:
+            description = expense.description or ""
+            if search_text.lower() not in description.lower():
+                continue
+                
+        filtered_expenses.append(expense)
+
+    # Update pagination to work with filtered list
+    page = request.args.get('page', 1, type=int)
+    per_page = 10
+    total_items = len(filtered_expenses)
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    current_expenses = filtered_expenses[start_idx:end_idx]
+
+    pagination = Pagination(None, page, per_page, total_items, current_expenses)
 
     # For the category dropdown
     categories = EXPENSE_CATEGORIES  # or dynamically gather from the DB if you prefer
@@ -186,11 +223,12 @@ def index():
     return render_template(
         'index.html', 
         recent_expenses=recent_expenses,
-        filtered_expenses=filtered_expenses,
+        filtered_expenses=current_expenses,
+        pagination=pagination,
         categories=categories
     )
 
-@app.route('/add-expense', methods=['POST'])
+@bp.route('/add-expense', methods=['POST'])
 @login_required
 def add_expense():
     date_str = request.form.get('date')
@@ -211,9 +249,9 @@ def add_expense():
         flash("Expense added successfully!", "success")
     except Exception as e:
         flash(f"Error adding expense: {e}", "danger")
-    return redirect(url_for('index'))
+    return redirect(url_for('main.index'))
 
-@app.route('/edit-expense/<int:expense_id>', methods=['GET', 'POST'])
+@bp.route('/edit-expense/<int:expense_id>', methods=['GET', 'POST'])
 @login_required
 def edit_expense(expense_id):
     expense = Expense.query.filter_by(id=expense_id, user_id=current_user.id).first_or_404()
@@ -232,14 +270,14 @@ def edit_expense(expense_id):
             expense.description = request.form.get('description')
             db.session.commit()
             flash("Expense updated successfully!", "success")
-            return redirect(url_for('index'))
+            return redirect(url_for('main.index'))
         except Exception as e:
             flash(f"Error updating expense: {e}", "danger")
     
     return render_template('edit_expense.html', expense=expense, categories=categories)
 
 
-@app.route('/delete-expense/<int:expense_id>', methods=['POST'])
+@bp.route('/delete-expense/<int:expense_id>', methods=['POST'])
 @login_required
 def delete_expense(expense_id):
     expense = Expense.query.filter_by(id=expense_id, user_id=current_user.id).first_or_404()
@@ -249,13 +287,13 @@ def delete_expense(expense_id):
         flash("Expense deleted successfully!", "success")
     except Exception as e:
         flash(f"Error deleting expense: {e}", "danger")
-    return redirect(url_for('index'))
+    return redirect(url_for('main.index'))
 
 # ---------------------------
 # Budget & Reporting Routes
 # ---------------------------
 
-@app.route('/set-budget', methods=['POST'])
+@bp.route('/set-budget', methods=['POST'])
 @login_required
 def set_budget():
     category = request.form.get('category')
@@ -272,9 +310,9 @@ def set_budget():
         flash("Budget set successfully!", "success")
     except Exception as e:
         flash(f"Error setting budget: {e}", "danger")
-    return redirect(url_for('dashboard'))
+    return redirect(url_for('main.dashboard'))
 
-@app.route('/dashboard')
+@bp.route('/dashboard')
 @login_required
 def dashboard():
     # Get current month's start and end dates
@@ -286,17 +324,29 @@ def dashboard():
         end_of_month = datetime(today.year, today.month + 1, 1)
     
     # Get monthly expenses per category
-    expenses_by_category = db.session.query(
+    # Get all expenses for the month
+    monthly_expenses = db.session.query(
         Expense.category,
-        db.func.sum(Expense._amount).label('total')
+        Expense._encrypted_amount
     ).filter(
         Expense.user_id == current_user.id,
         Expense.date >= start_of_month,
         Expense.date < end_of_month
-    ).group_by(Expense.category).all()
+    ).all()
+
+    # Process expenses and calculate totals by category
+    expense_totals = {}
+    for category, encrypted_amount in monthly_expenses:
+        if category not in expense_totals:
+            expense_totals[category] = 0.0
+        if encrypted_amount:
+            decrypted_amount = float(decrypt_to_numeric(encrypted_amount, current_user.get_encryption_key()))
+            expense_totals[category] += decrypted_amount
     
+    # Convert to list format for compatibility with rest of the function
+    category_totals = [(category, total) for category, total in expense_totals.items()]
     # Convert to dictionary for easier lookup
-    expense_totals = {cat: float(total) for cat, total in expenses_by_category}
+    expense_totals = {cat: float(total) for cat, total in category_totals}
     
     # Get all budgets
     budgets = Budget.query.filter_by(user_id=current_user.id).all()
@@ -332,11 +382,16 @@ def dashboard():
         category_values=category_values,
         budget_status=budget_status,
         categories=EXPENSE_CATEGORIES,
-        summary=expenses_by_category,
-        budgets=budgets
+        summary=category_totals,
+        expense_totals=expense_totals,
+        budgets=budgets,
+        chart_data={"line_labels": line_labels, "line_data": line_data, 
+                   "category_labels": category_labels, "category_values": category_values}
     )
 
 if __name__ == '__main__':
+    from final_project import create_app
+    app = create_app()
     app.run(
         host='0.0.0.0',  # or 127.0.0.1 for localhost only
         port=5000,

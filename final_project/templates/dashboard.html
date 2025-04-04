@@ -57,7 +57,7 @@
 
         <div class="dashboard-section">
             <h2>Set Budget</h2>
-            <form action="{{ url_for('set_budget') }}" method="POST" class="form">
+            <form action="{{ url_for('main.set_budget') }}" method="POST" class="form">
                 <div class="form-group">
                     <label for="category">Category:</label>
                     <select id="category" name="category" class="select-input" required>
@@ -183,7 +183,7 @@
      </script>
 
         <div class="navigation">
-            <a href="{{ url_for('index') }}" class="btn">Back to Expense Tracker</a>
+            <a href="{{ url_for('main.index') }}" class="btn">Back to Expense Tracker</a>
         </div>
     </div>
 </body>

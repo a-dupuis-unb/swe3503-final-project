@@ -20,7 +20,7 @@
             {% endif %}
         {% endwith %}
 
-        <form action="{{ url_for('edit_expense', expense_id=expense.id) }}" method="POST" class="form">
+        <form action="{{ url_for('main.edit_expense', expense_id=expense.id) }}" method="POST" class="form">
             <div class="form-group">
                 <label for="date">Date:</label>
                 <input type="date" id="date" name="date" value="{{ expense.date.strftime('%Y-%m-%d') }}" required>
@@ -50,7 +50,7 @@
         </form>
 
         <div class="navigation">
-            <a href="{{ url_for('index') }}" class="btn">Back to Expense Tracker</a>
+            <a href="{{ url_for('main.index') }}" class="btn">Back to Expense Tracker</a>
         </div>
     </div>
 </body>
