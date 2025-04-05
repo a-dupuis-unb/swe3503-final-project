@@ -28,6 +28,9 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(128), nullable=False)
     encrypted_key = db.Column(db.String(255), nullable=True)
     
+    # Special value to indicate password reset is pending
+    RESET_PENDING_HASH = 'RESET_PENDING'
+    
     expenses = db.relationship('Expense', backref='user', lazy=True)
     budgets = db.relationship('Budget', backref='user', lazy=True)
     
@@ -35,7 +38,18 @@ class User(UserMixin, db.Model):
         self.password_hash = generate_password_hash(password)
     
     def check_password(self, password):
+        if self.requires_password_change():
+            return False
         return check_password_hash(self.password_hash, password)
+    
+    def invalidate_password(self):
+        """Invalidate the current password to force a password reset"""
+        # Set password_hash to special value to indicate password needs reset
+        self.password_hash = self.RESET_PENDING_HASH
+    
+    def requires_password_change(self):
+        """Check if user needs to change their password"""
+        return self.password_hash == self.RESET_PENDING_HASH
     
     def generate_encryption_key(self):
         """Generate a new encryption key for the user and store it encrypted"""

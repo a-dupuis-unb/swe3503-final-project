@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container">
+    <h1>Welcome to your Financial Dashboard</h1>
+    <h3>What would you like to do?</h3>
+    
+    <div class="home-buttons">
+        <a href="{{ url_for('main.add_expense_page') }}" class="btn home-btn">
+            Add Expenses
+        </a>
+        <a href="{{ url_for('main.search_expenses') }}" class="btn home-btn">
+            Search Expenses
+        </a>
+        <a href="{{ url_for('main.budget') }}" class="btn home-btn">
+            View Budget
+        </a>
+        <a href="{{ url_for('main.dashboard') }}" class="btn home-btn">
+            View Dashboard
+        </a>
+    </div>
+</div>
+
+<style>
+    .home-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        max-width: 300px;
+        margin: 30px auto;
+    }
+
+    .home-btn {
+        width: 100%;
+        padding: 15px;
+        text-align: center;
+        transition: all 0.3s ease;
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .home-btn:hover {
+        background-color: #333333 !important;
+        border-color: #2b2b2b !important;
+        color: white !important;
+    }
+
+    .container {
+        text-align: center;
+        padding: 40px 20px;
+    }
+
+    h1 {
+        margin-bottom: 30px;
+    }
+</style>
+{% endblock %}

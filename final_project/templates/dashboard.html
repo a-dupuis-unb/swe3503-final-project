@@ -1,190 +1,251 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Expense Tracker</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-    <style>
-        .progress-bar {
-            background-color: #f0f0f0;
-            height: 10px;
-            border-radius: 5px;
-            margin: 5px 0;
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%;
-            transition: width 0.3s ease;
-        }
-        .under-budget { background-color: #4CAF50; }
-        .over-budget { background-color: #f44336; }
-        .budget-status {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin: 10px 0;
-        }
-        .budget-details {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 10px;
-            margin-top: 5px;
-        }
-        .budget-metric {
-            text-align: center;
-            padding: 5px;
-            background-color: #f8f9fa;
-            border-radius: 5px;
-        }
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-</head>
-<body>
-    {% include 'navbar.html' %}
-    <div class="container">
-        <h1>Dashboard</h1>
-        
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                <div class="flash-messages">
-                    {% for message in messages %}
-                        <div class="flash-message">{{ message }}</div>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
+{% extends "base.html" %}
 
+{% block title %}Dashboard - Expense Tracker{% endblock %}
+
+{% block additional_styles %}
+<style>
+    .progress-bar {
+        background-color: #f0f0f0;
+        height: 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+        overflow: hidden;
+    }
+    .progress-fill {
+        height: 100%;
+        transition: width 0.3s ease;
+    }
+    .under-budget { background-color: #4CAF50; }
+    .over-budget { background-color: #f44336; }
+    .budget-status {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 10px 0;
+    }
+    .budget-details {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 5px;
+    }
+    .budget-metric {
+        text-align: center;
+        padding: 10px;
+        background-color: #f8f9fa;        border-radius: 5px;
+    }
+    .budget-metric strong {
+        display: block;
+        margin-bottom: 5px;
+        color: #495057;
+    }
+    .dashboard-section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .chart-container {
+        position: relative;
+        margin: 0 auto;
+        height: 300px;
+        width: 100%;
+        max-width: 800px;
+    }
+    .gauge-container {
+        position: relative;
+        height: 180px;
+        width: 100%;
+        max-width: 400px;
+        margin: 0 auto;
+    }
+    .budget-overview {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 20px;
+        margin-top: 20px;
+    }
+    .budget-summary {
+        flex: 1;
+        min-width: 200px;
+        max-width: 300px;
+        padding: 15px;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        text-align: center;
+    }
+    .budget-total {
+        font-size: 1.1em;
+        font-weight: 500;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 6px;
+        margin-bottom: 20px;
+        text-align: center;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Dashboard</h1>
+
+
+        <!-- Budget Gauge Section -->
         <div class="dashboard-section">
-            <h2>Set Budget</h2>
-            <form action="{{ url_for('main.set_budget') }}" method="POST" class="form">
-                <div class="form-group">
-                    <label for="category">Category:</label>
-                    <select id="category" name="category" class="select-input" required>
-                        {% for category in categories %}
-                            <option value="{{ category }}">{{ category }}</option>
-                        {% endfor %}
-                    </select>
+            <h2>Budget Utilization</h2>
+            <div class="gauge-container">
+                <canvas id="gaugeChart"></canvas>
+            </div>
+            <div class="budget-overview mt-4">
+                <div class="budget-summary">
+                    <strong>Total Budget</strong>
+                    <h3>${{ "%.2f"|format(total_budget) }}</h3>
                 </div>
-                
-                <div class="form-group">
-                    <label for="amount">Budget Amount:</label>
-                    <input type="number" step="0.01" id="amount" name="amount" required>
+                <div class="budget-summary">
+                    <strong>Total Spent</strong>
+                    <h3>${{ "%.2f"|format(total_spent) }}</h3>
                 </div>
-                
-                <div class="form-group">
-                    <label for="period">Period:</label>
-                    <select id="period" name="period" class="select-input">
-                        <option value="monthly">Monthly</option>
-                        <option value="weekly">Weekly</option>
-                    </select>
+                <div class="budget-summary">
+                    <strong>Remaining</strong>
+                    <h3 class="{{ 'text-success' if (total_budget - total_spent) >= 0 else 'text-danger' }}">
+                        ${{ "%.2f"|format(total_budget - total_spent) }}
+                    </h3>
                 </div>
-                
-                <button type="submit" class="btn">Set Budget</button>
-            </form>
+            </div>
         </div>
 
-        <div class="dashboard-section">
-            <h2>Budget Overview</h2>
-            {% for status in budget_status %}
-                <div class="summary-item">
-                    <h3>{{ status.category }}</h3>
-                    <div class="budget-details">
-                        <div class="budget-metric">
-                            <strong>Budget</strong>
-                            <div>${{ "%.2f"|format(status.budget_amount) if status.has_budget else "0.00" }}</div>
-                        </div>
-                        <div class="budget-metric">
-                            <strong>Spent</strong>
-                            <div>${{ "%.2f"|format(status.spent) }}</div>
-                        </div>
-                        <div class="budget-metric">
-                            <strong>Remaining</strong>
-                            <div>${{ "%.2f"|format(status.remaining) if status.has_budget else "0.00" }}</div>
-                        </div>
-                    </div>
-                    
-                    {% if status.has_budget %}
-                        <div class="progress-bar">
-                            {% set percentage = (status.spent / status.budget_amount * 100) if status.budget_amount > 0 else 100 %}
-                            <div class="progress-fill {{ 'under-budget' if status.remaining >= 0 else 'over-budget' }}"
-                                 style="width: {{ percentage if percentage <= 100 else 100 }}%">
-                            </div>
-                        </div>
-                    {% endif %}
-                </div>
-            {% endfor %}
-        </div>
+
              
-        <!-- Example pie chart for category distribution -->
-         <h2>Current Month Expense Breakdown</h2>
-         <canvas id="pieChart" width="500" height="400"></canvas>
-         
-         <!-- Example line chart for monthly spending trend -->
-         <h2>Monthly Spending Trend</h2>
-         <canvas id="lineChart" width="400" height="200"></canvas>
-     </div>
- 
-     <!-- Pass Python data to JavaScript using Jinja2's tojson filter -->
-     <script>
-         // Data from Flask
-         const lineLabels = {{ line_labels|tojson }};
-         const lineData = {{ line_data|tojson }};
- 
-         const categoryLabels = {{ category_labels|tojson }};
-         const categoryValues = {{ category_values|tojson }};
-
-         // Create the pie chart
-         new Chart(document.getElementById('pieChart'), {
-             type: 'pie',
-             data: {
-                 labels: categoryLabels,
-                 datasets: [{
-                     label: 'Expense Distribution',
-                     data: categoryValues,
-                     backgroundColor: [
-                         'rgba(255, 99, 132, 0.6)',
-                         'rgba(54, 162, 235, 0.6)',
-                         'rgba(255, 206, 86, 0.6)',
-                         'rgba(75, 192, 192, 0.6)'
-                     ],
-                     borderColor: '#fff',
-                     borderWidth: 1
-                 }]
-             },
-             options: {
-                 responsive: false,
-             }
-         });
- 
-         // Create the line chart
-         new Chart(document.getElementById('lineChart'), {
-             type: 'line',
-             data: {
-                 labels: lineLabels,
-                 datasets: [{
-                     label: 'Monthly Spending',
-                     data: lineData,
-                     borderColor: 'rgba(75, 192, 192, 1)',
-                     backgroundColor: 'rgba(75, 192, 192, 0.2)',
-                     fill: false,
-                     tension: 0.1
-                 }]
-             },
-             options: {
-                 responsive: true,
-                 scales: {
-                     y: {
-                         beginAtZero: true
-                     }
-                 }
-             }
-         });
-     </script>
-
-        <div class="navigation">
-            <a href="{{ url_for('main.index') }}" class="btn">Back to Expense Tracker</a>
+        <!-- Pie chart for category distribution -->
+        <div class="dashboard-section">
+            <h2>Current Month Expense Breakdown</h2>
+            <div class="chart-container">
+                <canvas id="pieChart"></canvas>
+            </div>
         </div>
+         
+        <!-- Line chart for monthly spending trend -->
+        <div class="dashboard-section">
+            <h2>Monthly Spending Trend</h2>
+            <div class="chart-container">
+                <canvas id="lineChart"></canvas>
+            </div>
+        </div>
+    <!-- Chart visualization is handled in the scripts block below -->
+
+    <div class="d-flex justify-content-center gap-3 mt-4 mb-4">
+        <a href="{{ url_for('main.budget') }}" class="btn btn-outline-primary" style="width: 150px;">Manage Budgets</a>
+        <a href="{{ url_for('main.home') }}" class="btn btn-outline-secondary" style="width: 150px;">Back to Home</a>
     </div>
-</body>
-</html>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Data from Flask
+    const lineLabels = {{ line_labels|tojson }};
+    const lineData = {{ line_data|tojson }};
+    const categoryLabels = {{ category_labels|tojson }};
+    const categoryValues = {{ category_values|tojson }};
+
+    // Create the pie chart
+    const pieCtx = document.getElementById('pieChart');
+    new Chart(pieCtx, {
+        type: 'pie',
+        data: {
+            labels: categoryLabels,
+            datasets: [{
+                label: 'Expense Distribution',
+                data: categoryValues,
+                backgroundColor: [
+                    'rgba(255, 99, 132, 0.6)',
+                    'rgba(54, 162, 235, 0.6)',
+                    'rgba(255, 206, 86, 0.6)',
+                    'rgba(75, 192, 192, 0.6)',
+                    'rgba(153, 102, 255, 0.6)',
+                    'rgba(255, 159, 64, 0.6)',
+                    'rgba(201, 203, 207, 0.6)'
+                ],
+                borderColor: '#fff',
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'right'
+                }
+            }
+        }
+    });
+
+    // Create the line chart
+    const lineCtx = document.getElementById('lineChart');
+    new Chart(lineCtx, {
+        type: 'line',
+        data: {
+            labels: lineLabels,
+            datasets: [{
+                label: 'Monthly Spending',
+                data: lineData,
+                borderColor: 'rgba(75, 192, 192, 1)',
+                backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                fill: false,
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return '$' + value.toFixed(2);
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Create gauge chart for budget utilization
+    const gaugeCtx = document.getElementById('gaugeChart').getContext('2d');
+    const utilizationPercentage = {{ (total_spent / total_budget * 100) if total_budget > 0 else 0 }};
+    const gaugeColor = utilizationPercentage <= 50 ? '#4CAF50' : 
+                      utilizationPercentage <= 75 ? '#FFA500' : '#f44336';
+
+    new Chart(gaugeCtx, {
+        type: 'doughnut',
+        data: {
+            datasets: [{
+                data: [utilizationPercentage, 100 - utilizationPercentage],
+                backgroundColor: [gaugeColor, '#f0f0f0'],
+                borderWidth: 0,
+                circumference: 180,
+                rotation: 270
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '70%',
+            plugins: {
+                tooltip: { enabled: false },
+                legend: { display: false },
+                title: {
+                    display: true,
+                    text: `Budget Used: ${utilizationPercentage.toFixed(1)}%`,
+                    font: { size: 16 },
+                    padding: { top: 20 }
+                }
+            }
+        }
+    });
+</script>
+{% endblock %}

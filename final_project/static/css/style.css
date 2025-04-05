@@ -254,44 +254,59 @@ hr {
 
 /* Navbar styles */
 .navbar {
-    background-color: #333;
-    color: #fff;
-    padding: 10px 20px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
+    margin-bottom: 2rem;
 }
 
-.navbar-container {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+.navbar.bg-success {
+    background-color: #28a745 !important;
 }
 
-.nav-logo {
-    font-size: 1.5em;
-    font-weight: bold;
-    color: #fff;
-    text-decoration: none;
+.navbar .nav-link {
+    margin: 0 0.5rem;
 }
 
-.nav-menu {
-    list-style: none;
-    display: flex;
-    margin: 0;
-    padding: 0;
+.navbar .nav-link:hover {
+    opacity: 0.8;
 }
 
-.nav-item {
-    margin-left: 20px;
+/* Button styles */
+.btn-primary, .btn {
+    background-color: #28a745;
+    border-color: #28a745;
+    color: white;
+    transition: all 0.3s ease;
 }
 
-.nav-link {
-    color: #fff;
-    text-decoration: none;
-    font-size: 1em;
-    transition: color 0.3s ease;
+.btn:hover, .btn-primary:hover {
+    background-color: #333333;
+    border-color: #2b2b2b;
+    color: white;
 }
 
-.nav-link:hover {
-    color: #ddd;
+.btn {
+    text-align: center;
+    display: inline-block;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    border-radius: 0.2rem;
+    min-width: fit-content;
+}
+
+/* Card styles */
+.card {
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    border: none;
+    margin-top: 3rem;
+}
+
+.card-header {
+    background-color: #28a745;
+    color: white;
+    text-align: center;
+    font-size: 1.5rem;
+    padding: 1rem;
 }

@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+
+{% block title %}Budget Management - Expense Tracker{% endblock %}
+
+{% block additional_styles %}
+<style>
+    .progress-bar {
+        background-color: #f0f0f0;
+        height: 10px;
+        border-radius: 5px;
+        margin: 5px 0;
+        overflow: hidden;
+    }
+    .progress-fill {
+        height: 100%;
+        transition: width 0.3s ease;
+    }
+    .under-budget { background-color: #4CAF50; }
+    .over-budget { background-color: #f44336; }
+    .budget-status {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin: 10px 0;
+    }
+    .budget-details {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin-top: 5px;
+    }
+    .budget-metric {
+        text-align: center;
+        padding: 10px;
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .budget-metric strong {
+        display: block;
+        margin-bottom: 5px;
+        color: #495057;
+    }
+    .dashboard-section {
+        margin-bottom: 30px;
+        padding: 20px;
+        background-color: #fff;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .summary-item {
+        padding: 15px;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #e9ecef;
+    }
+    .summary-item:last-child {
+        border-bottom: none;
+    }
+    .summary-item h3 {
+        font-size: 1.2rem;
+        margin-bottom: 10px;
+        color: #343a40;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Budget Management</h1>
+    
+<!-- Budget Setting Form -->
+<div class="dashboard-section mb-4">
+    <h2>Set Budget</h2>
+    <form method="POST" action="{{ url_for('main.set_budget') }}" class="mt-3">
+        <div class="row">
+            <div class="col-md-4 mb-3">
+                <label for="category" class="form-label">Category</label>
+                <select class="form-select" id="category" name="category" required>
+                    {% for category in categories %}
+                    <option value="{{ category }}">{{ category }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-4 mb-3">
+                <label for="amount" class="form-label">Monthly Budget Amount</label>
+                <div class="input-group">
+                    <span class="input-group-text">$</span>
+                    <input type="number" step="0.01" class="form-control" id="amount" name="amount" required>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <label for="period" class="form-label">Period</label>
+                <select class="form-select" id="period" name="period">
+                    <option value="monthly">Monthly</option>
+                    <option value="weekly">Weekly</option>
+                </select>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary mt-2">Set Budget</button>
+    </form>
+</div>
+
+<div class="dashboard-section">
+    <h2>Budget Details</h2>
+    
+    {% if budget_status|length > 0 %}
+        {% for status in budget_status %}
+            <div class="summary-item">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h3 class="mb-0">{{ status.category }}</h3>
+                    {% if status.has_budget %}
+                        {% set percentage = (status.spent / status.budget_amount * 100) if status.budget_amount > 0 else 100 %}
+                        <span class="badge {{ 'bg-success' if status.remaining >= 0 else 'bg-danger' }}">
+                            {{ "%.1f"|format(percentage) }}% Used
+                        </span>
+                    {% else %}
+                        <span class="badge bg-secondary">No Budget Set</span>
+                    {% endif %}
+                </div>
+                
+                <div class="budget-details">
+                    <div class="budget-metric">
+                        <strong>Budget</strong>
+                        <div>${{ "%.2f"|format(status.budget_amount) if status.has_budget else "0.00" }}</div>
+                    </div>
+                    <div class="budget-metric">
+                        <strong>Spent</strong>
+                        <div>${{ "%.2f"|format(status.spent) }}</div>
+                    </div>
+                    <div class="budget-metric">
+                        <strong>Remaining</strong>
+                        <div class="{{ 'text-success' if status.remaining >= 0 else 'text-danger' }}">
+                            ${{ "%.2f"|format(status.remaining) if status.has_budget else "0.00" }}
+                        </div>
+                    </div>
+                </div>
+                
+                {% if status.has_budget %}
+                    <div class="progress-bar mt-2">
+                        {% set percentage = (status.spent / status.budget_amount * 100) if status.budget_amount > 0 else 100 %}
+                        <div class="progress-fill {{ 'under-budget' if status.remaining >= 0 else 'over-budget' }}"
+                             style="width: {{ percentage if percentage <= 100 else 100 }}%">
+                        </div>
+                    </div>
+                {% endif %}
+            </div>
+        {% endfor %}
+    {% else %}
+        <div class="alert alert-info">
+            No budget information available. Set your first budget above.
+        </div>
+    {% endif %}
+</div>
+
+<div class="d-flex justify-content-center gap-3 mt-4 mb-4">
+    <a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-primary" style="width: 150px;">View Dashboard</a>
+    <a href="{{ url_for('main.home') }}" class="btn btn-outline-secondary" style="width: 150px;">Back to Home</a>
+</div>
+{% endblock %}
+

@@ -1,10 +1,20 @@
-# app.py
-from flask import Blueprint, render_template, request, redirect, url_for, flash
-from flask_login import login_user, logout_user, login_required, current_user
+import random
+import re
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
-import json, re
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask_login import login_user, logout_user, login_required, current_user
 from final_project.encryption_utils import decrypt_to_numeric
+from .models import User, Expense, Budget, db, EXPENSE_CATEGORIES
+import functools
+
+bp = Blueprint('main', __name__)
+
+# Authentication settings
+LOCKOUT_THRESHOLD = 3  # Number of failed attempts before lockout
+LOCKOUT_TIME = 3       # Lockout duration in minutes
+FAILED_ATTEMPTS = {}   # Track failed login attempts
+LOCKOUT_UNTIL = {}     # Track lockout expiration times
 
 class Pagination:
     def __init__(self, query, page, per_page, total, items):
@@ -39,24 +49,6 @@ class Pagination:
         if not self.has_next:
             return None
         return self.page + 1
-
-from final_project import db
-from final_project.models import User, Expense, Budget, EXPENSE_CATEGORIES
-
-# Create a blueprint for all routes
-bp = Blueprint('main', __name__)
-
-# Database tables are now managed through Flask-Migrate
-# To initialize:
-# 1. flask db init    - Create migration repository
-# 2. flask db migrate - Generate initial migration
-# 3. flask db upgrade - Apply migration to database
-
-LOCKOUT_THRESHOLD = 5      # Number of failed attempts allowed
-LOCKOUT_TIME = 3           # Lockout duration in minutes
-FAILED_ATTEMPTS = {}       # Tracks number of failed attempts per user identifier
-LOCKOUT_UNTIL = {}         # Tracks lockout expiration time per user identifier
-
 # ---------------------------
 # User Authentication Routes
 # ---------------------------
@@ -69,7 +61,7 @@ def register():
         password = request.form.get('password')
 
         # Basic password policy: at least 8 chars, includes a digit, an uppercase, etc.
-        pattern = r'^(?=.*[A-Z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-=\[\]{};":\\|,.<>\/?]{8,}$'
+        pattern = r'^(?=.*[A-Z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-=\[\]{};\":\\|,.<>\/?]{8,}$'
 
         if not re.match(pattern, password):
             flash("Password must be at least 8 characters long, contain an uppercase letter, and a digit.", "danger")
@@ -94,38 +86,44 @@ def register():
 @bp.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        identifier = request.form.get('identifier')  # username or email
+        email = request.form.get('email')
         password = request.form.get('password')
 
-        # 1. Check if user is currently locked out
-        lockout_expires = LOCKOUT_UNTIL.get(identifier)
+        # Check if user is currently locked out
+        lockout_expires = LOCKOUT_UNTIL.get(email)
         if lockout_expires and datetime.utcnow() < lockout_expires:
             remaining = int((lockout_expires - datetime.utcnow()).total_seconds())
             flash(f"You are locked out. Please wait {remaining} seconds before trying again.", "danger")
             return redirect(url_for('main.login'))
 
-        # 2. Attempt to find and authenticate user
-        user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
+        # Attempt to find and authenticate user
+        user = User.query.filter_by(email=email).first()
         
         if user and user.check_password(password):
             # SUCCESS: Log them in
             login_user(user)
             # Reset attempt count and lockout
-            FAILED_ATTEMPTS[identifier] = 0
-            LOCKOUT_UNTIL.pop(identifier, None)  # remove from lockout if present
+            FAILED_ATTEMPTS[email] = 0
+            LOCKOUT_UNTIL.pop(email, None)  # remove from lockout if present
+            
+            # Check if user has a temporary password and needs to change it
+            if user.requires_password_change():
+                flash("Your password has been reset. Please set a new password to continue.", "warning")
+                return redirect(url_for('main.force_password_change'))
+            
             flash("Logged in successfully!", "success")
-            return redirect(url_for('main.index'))
+            return redirect(url_for('main.home'))
         else:
             # FAIL: Increment attempt count
-            FAILED_ATTEMPTS[identifier] = FAILED_ATTEMPTS.get(identifier, 0) + 1
-            attempts = FAILED_ATTEMPTS[identifier]
+            FAILED_ATTEMPTS[email] = FAILED_ATTEMPTS.get(email, 0) + 1
+            attempts = FAILED_ATTEMPTS[email]
             remaining_attempts = LOCKOUT_THRESHOLD - attempts
 
             if attempts >= LOCKOUT_THRESHOLD:
                 # Lock them out for 3 minutes
-                LOCKOUT_UNTIL[identifier] = datetime.utcnow() + timedelta(minutes=LOCKOUT_TIME)
+                LOCKOUT_UNTIL[email] = datetime.utcnow() + timedelta(minutes=LOCKOUT_TIME)
                 flash(f"You have reached {LOCKOUT_THRESHOLD} failed attempts. "
-                      f"Locked out for {LOCKOUT_TIME} minutes.", "danger")
+                     f"Locked out for {LOCKOUT_TIME} minutes.", "danger")
             else:
                 flash(f"Invalid credentials. You have {remaining_attempts} attempts left.", "danger")
 
@@ -134,6 +132,111 @@ def login():
     # GET request: Just render the login page
     return render_template('login.html')
 
+@bp.route('/reset-password-request', methods=['GET', 'POST'])
+def reset_password_request():
+    if current_user.is_authenticated:
+        return redirect(url_for('main.home'))
+    if request.method == 'POST':
+        email = request.form.get('email')
+        user = User.query.filter_by(email=email).first()
+        if user:
+            # Store email in session for the reset flow
+            session['reset_email'] = email
+            
+            # Mark account as requiring password reset
+            user.invalidate_password()
+            db.session.commit()
+            
+            # Redirect directly to reset page
+            flash('Please create a new password for your account.', 'info')
+            return redirect(url_for('main.reset_password'))
+        flash('Email address not found.', 'danger')
+    return render_template('reset_password.html')
+
+@bp.route('/reset-password', methods=['GET', 'POST'])
+def reset_password():
+    # Check if we have a reset email in session
+    if 'reset_email' not in session:
+        flash('Please submit a password reset request first.', 'warning')
+        return redirect(url_for('main.reset_password_request'))
+        
+    # Get user from session email
+    email = session['reset_email']
+    user = User.query.filter_by(email=email).first()
+    
+    if not user:
+        # Clear invalid session and redirect
+        session.pop('reset_email', None)
+        flash('Invalid reset session. Please try again.', 'danger')
+        return redirect(url_for('main.reset_password_request'))
+    
+    if request.method == 'POST':
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+        
+        # Check if passwords match
+        if new_password != confirm_password:
+            flash('Passwords do not match.', 'danger')
+            return redirect(url_for('main.reset_password'))
+        
+        # Check password strength
+        pattern = r'^(?=.*[A-Z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-=\[\]{};\":\\|,.<>\/?]{8,}$'
+        if not re.match(pattern, new_password):
+            return redirect(url_for('main.reset_password'))
+        # Set the new password
+        user.set_password(new_password)
+        db.session.commit()
+        db.session.commit()
+        
+        # Clear reset session
+        session.pop('reset_email', None)
+        
+        flash('Your password has been updated successfully. Please log in with your new password.', 'success')
+        return redirect(url_for('main.login'))
+        
+    return render_template('change_password.html', reset_mode=True)
+
+@bp.route('/force-password-change', methods=['GET', 'POST'])
+@login_required
+def force_password_change():
+    if not current_user.requires_password_change():
+        # If user doesn't need to change password, redirect to home
+        return redirect(url_for('main.home'))
+        
+    if request.method == 'POST':
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+        
+        # Check if passwords match
+        if new_password != confirm_password:
+            flash('Passwords do not match.', 'danger')
+            return redirect(url_for('main.force_password_change'))
+        
+        # Check password strength (same as registration)
+        pattern = r'^(?=.*[A-Z])(?=.*\d)[A-Za-z\d!@#$%^&*()_+\-=\[\]{};\":\\|,.<>\/?]{8,}$'
+        if not re.match(pattern, new_password):
+            flash("Password must be at least 8 characters long, contain an uppercase letter, and a digit.", "danger")
+            return redirect(url_for('main.force_password_change'))
+        
+        current_user.set_password(new_password)
+        db.session.commit()
+        
+        flash('Your password has been updated successfully.', 'success')
+        return redirect(url_for('main.home'))
+        
+    return render_template('change_password.html')
+
+# Middleware to check if password reset is required and redirect
+def check_password_change_required(view_func):
+    @functools.wraps(view_func)
+    def wrapped_view(*args, **kwargs):
+        if current_user.is_authenticated and current_user.requires_password_change():
+            # Exclude the force_password_change route and logout route to prevent redirect loops
+            if request.endpoint != 'main.force_password_change' and request.endpoint != 'main.logout':
+                flash('You must set a new password before continuing.', 'warning')
+                return redirect(url_for('main.force_password_change'))
+        return view_func(*args, **kwargs)
+    return wrapped_view
 @bp.route('/logout')
 @login_required
 def logout():
@@ -144,19 +247,33 @@ def logout():
 # ---------------------------
 # Expense Tracking Routes
 # ---------------------------
+# Expense Tracking Routes
+# ---------------------------
 
 @bp.route('/')
 @login_required
-def index():
-    # Always get the 5 most recent expenses (unfiltered)
+@check_password_change_required
+def home():
+    return render_template('home.html')
+
+@bp.route('/add-expense-page')
+@login_required
+@check_password_change_required
+def add_expense_page():
+    # Get the last 15 days of expenses
     recent_expenses = (Expense.query
         .filter_by(user_id=current_user.id)
         .order_by(Expense.date.desc())
-        .limit(5)
-        .all()
-    )
+        .limit(15)
+        .all())
+    return render_template('add_expense.html', 
+                        categories=EXPENSE_CATEGORIES,
+                        recent_expenses=recent_expenses)
 
-    # Get filters from query parameters (sent via ?category_filter=Food&start_date=... etc.)
+@bp.route('/search-expenses')
+@login_required
+@check_password_change_required
+def search_expenses():
     category_filter = request.args.get('category_filter', '')
     min_amount = request.args.get('min_amount', '')
     max_amount = request.args.get('max_amount', '')
@@ -177,12 +294,14 @@ def index():
     if end_date:
         try:
             end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-            query = query.filter(Expense.date <= end_dt)
+            # Add 1 day to end_dt to make it inclusive of the entire end date
+            end_dt = end_dt + timedelta(days=1)
+            query = query.filter(Expense.date < end_dt)
         except ValueError:
             pass
 
     # Apply category filter if provided
-    if category_filter and category_filter != 'all':
+    if category_filter:
         query = query.filter(Expense.category == category_filter)
 
     # Get all matching expenses
@@ -194,9 +313,9 @@ def index():
         amount = expense.amount  # This will decrypt the amount
         
         # Apply amount filters
-        if min_amount and amount < float(min_amount):
+        if min_amount and float(amount) < float(min_amount):
             continue
-        if max_amount and amount > float(max_amount):
+        if max_amount and float(amount) > float(max_amount):
             continue
             
         # Apply search text filter
@@ -214,22 +333,25 @@ def index():
     start_idx = (page - 1) * per_page
     end_idx = start_idx + per_page
     current_expenses = filtered_expenses[start_idx:end_idx]
-
+    
     pagination = Pagination(None, page, per_page, total_items, current_expenses)
 
-    # For the category dropdown
-    categories = EXPENSE_CATEGORIES  # or dynamically gather from the DB if you prefer
-
     return render_template(
-        'index.html', 
-        recent_expenses=recent_expenses,
+        'search_expenses.html',
         filtered_expenses=current_expenses,
         pagination=pagination,
-        categories=categories
+        categories=EXPENSE_CATEGORIES,
+        selected_category=category_filter,
+        start_date=start_date,
+        end_date=end_date,
+        min_amount=min_amount,
+        max_amount=max_amount,
+        search_text=search_text
     )
 
 @bp.route('/add-expense', methods=['POST'])
 @login_required
+@check_password_change_required
 def add_expense():
     date_str = request.form.get('date')
     category = request.form.get('category')
@@ -249,14 +371,15 @@ def add_expense():
         flash("Expense added successfully!", "success")
     except Exception as e:
         flash(f"Error adding expense: {e}", "danger")
-    return redirect(url_for('main.index'))
+    return redirect(url_for('main.add_expense_page'))
 
 @bp.route('/edit-expense/<int:expense_id>', methods=['GET', 'POST'])
 @login_required
+@check_password_change_required
 def edit_expense(expense_id):
     expense = Expense.query.filter_by(id=expense_id, user_id=current_user.id).first_or_404()
     
-    # Merge categories similarly as in the index route
+    # Merge categories similarly as in the home route
     categories_query = db.session.query(Expense.category).filter_by(user_id=current_user.id).distinct().all()
     expense_categories = [cat[0] for cat in categories_query] if categories_query else []
     default_categories = EXPENSE_CATEGORIES
@@ -270,15 +393,16 @@ def edit_expense(expense_id):
             expense.description = request.form.get('description')
             db.session.commit()
             flash("Expense updated successfully!", "success")
-            return redirect(url_for('main.index'))
+            return redirect(url_for('main.add_expense_page'))
         except Exception as e:
             flash(f"Error updating expense: {e}", "danger")
     
     return render_template('edit_expense.html', expense=expense, categories=categories)
 
 
-@bp.route('/delete-expense/<int:expense_id>', methods=['POST'])
+@bp.route('/delete-expense/<int:expense_id>')
 @login_required
+@check_password_change_required
 def delete_expense(expense_id):
     expense = Expense.query.filter_by(id=expense_id, user_id=current_user.id).first_or_404()
     try:
@@ -287,14 +411,68 @@ def delete_expense(expense_id):
         flash("Expense deleted successfully!", "success")
     except Exception as e:
         flash(f"Error deleting expense: {e}", "danger")
-    return redirect(url_for('main.index'))
+    return redirect(url_for('main.add_expense_page'))
 
 # ---------------------------
 # Budget & Reporting Routes
 # ---------------------------
 
+@bp.route('/budget')
+@login_required
+@check_password_change_required
+def budget():
+    # Get all budgets
+    budgets = Budget.query.filter_by(user_id=current_user.id).all()
+    
+    # Get monthly expenses
+    today = datetime.utcnow()
+    start_of_month = datetime(today.year, today.month, 1)
+    if today.month == 12:
+        end_of_month = datetime(today.year + 1, 1, 1)
+    else:
+        end_of_month = datetime(today.year, today.month + 1, 1)
+    
+    monthly_expenses = db.session.query(
+        Expense.category,
+        Expense._encrypted_amount
+    ).filter(
+        Expense.user_id == current_user.id,
+        Expense.date >= start_of_month,
+        Expense.date < end_of_month
+    ).all()
+
+    # Calculate expenses by category
+    expense_totals = {}
+    for category, encrypted_amount in monthly_expenses:
+        if category not in expense_totals:
+            expense_totals[category] = 0.0
+        if encrypted_amount:
+            decrypted_amount = float(decrypt_to_numeric(encrypted_amount, current_user.get_encryption_key()))
+            expense_totals[category] += decrypted_amount
+
+    # Prepare budget status for each category
+    budget_status = []
+    for category in EXPENSE_CATEGORIES:
+        budget = next((b for b in budgets if b.category == category), None)
+        status = {
+            'category': category,
+            'budget_amount': budget.amount if budget else 0,
+            'spent': expense_totals.get(category, 0),
+            'remaining': (budget.amount - expense_totals.get(category, 0)) if budget else 0,
+            'has_budget': budget is not None
+        }
+        budget_status.append(status)
+
+    return render_template(
+        'budget.html',
+        budget_status=budget_status,
+        categories=EXPENSE_CATEGORIES,
+        budgets=budgets
+    )
+
 @bp.route('/set-budget', methods=['POST'])
 @login_required
+@check_password_change_required
 def set_budget():
     category = request.form.get('category')
     amount = request.form.get('amount')
@@ -310,10 +488,11 @@ def set_budget():
         flash("Budget set successfully!", "success")
     except Exception as e:
         flash(f"Error setting budget: {e}", "danger")
-    return redirect(url_for('main.dashboard'))
+    return redirect(url_for('main.budget'))
 
 @bp.route('/dashboard')
 @login_required
+@check_password_change_required
 def dashboard():
     # Get current month's start and end dates
     today = datetime.utcnow()
@@ -324,10 +503,10 @@ def dashboard():
         end_of_month = datetime(today.year, today.month + 1, 1)
     
     # Get monthly expenses per category
-    # Get all expenses for the month
     monthly_expenses = db.session.query(
         Expense.category,
-        Expense._encrypted_amount
+        Expense._encrypted_amount,
+        Expense.date
     ).filter(
         Expense.user_id == current_user.id,
         Expense.date >= start_of_month,
@@ -336,43 +515,69 @@ def dashboard():
 
     # Process expenses and calculate totals by category
     expense_totals = {}
-    for category, encrypted_amount in monthly_expenses:
+    total_spent = 0
+    for category, encrypted_amount, date in monthly_expenses:
         if category not in expense_totals:
             expense_totals[category] = 0.0
         if encrypted_amount:
             decrypted_amount = float(decrypt_to_numeric(encrypted_amount, current_user.get_encryption_key()))
             expense_totals[category] += decrypted_amount
+            total_spent += decrypted_amount
     
-    # Convert to list format for compatibility with rest of the function
-    category_totals = [(category, total) for category, total in expense_totals.items()]
-    # Convert to dictionary for easier lookup
-    expense_totals = {cat: float(total) for cat, total in category_totals}
-    
-    # Get all budgets
+    # Get all budgets and calculate total budget
     budgets = Budget.query.filter_by(user_id=current_user.id).all()
+    total_budget = sum(budget.amount for budget in budgets)
+    
+    # Calculate budget utilization percentage
+    budget_utilization = (total_spent / total_budget * 100) if total_budget > 0 else 0
     
     # Calculate budget status for each category
     budget_status = []
     for category in EXPENSE_CATEGORIES:
         budget = next((b for b in budgets if b.category == category), None)
+        spent = expense_totals.get(category, 0)
         status = {
             'category': category,
             'budget_amount': budget.amount if budget else 0,
-            'spent': expense_totals.get(category, 0),
-            'remaining': (budget.amount - expense_totals.get(category, 0)) if budget else 0,
+            'spent': spent,
+            'remaining': (budget.amount - spent) if budget else 0,
             'has_budget': budget is not None
         }
         budget_status.append(status)
 
-    # Example data for the pie chart (category distribution)
-    # If it were live data, it would be queried from the database and summed
-    category_labels = ["Food", "Transportation", "Housing", "Entertainment"]
-    category_values = [300, 150, 800, 100]
+    # Get real data for pie chart (current month's expense distribution)
+    category_labels = list(expense_totals.keys())
+    category_values = [expense_totals[cat] for cat in category_labels]
 
-    # Example data for the line chart (monthly spending over 6 months)
-    # If it were live data, it would be queried from the database and summed
-    line_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
-    line_data = [200, 250, 180, 300, 220, 400]
+    # Get data for line chart (last 6 months of expenses)
+    line_labels = []
+    line_data = []
+    for i in range(5, -1, -1):
+        current_date = today - timedelta(days=30 * i)
+        month_start = datetime(current_date.year, current_date.month, 1)
+        if current_date.month == 12:
+            month_end = datetime(current_date.year + 1, 1, 1)
+        else:
+            month_end = datetime(current_date.year, current_date.month + 1, 1)
+        
+        # Query expenses for this month
+        month_expenses = db.session.query(
+            Expense._encrypted_amount
+        ).filter(
+            Expense.user_id == current_user.id,
+            Expense.date >= month_start,
+            Expense.date < month_end
+        ).all()
+        
+        # Calculate total for the month
+        month_total = 0
+        for (encrypted_amount,) in month_expenses:
+            if encrypted_amount:
+                decrypted_amount = float(decrypt_to_numeric(encrypted_amount, current_user.get_encryption_key()))
+                month_total += decrypted_amount
+        
+        line_labels.append(current_date.strftime('%b'))
+        line_data.append(month_total)
     
     return render_template(
         'dashboard.html',
@@ -382,11 +587,11 @@ def dashboard():
         category_values=category_values,
         budget_status=budget_status,
         categories=EXPENSE_CATEGORIES,
-        summary=category_totals,
         expense_totals=expense_totals,
         budgets=budgets,
-        chart_data={"line_labels": line_labels, "line_data": line_data, 
-                   "category_labels": category_labels, "category_values": category_values}
+        budget_utilization=budget_utilization,
+        total_budget=total_budget,
+        total_spent=total_spent
     )
 
 if __name__ == '__main__':
